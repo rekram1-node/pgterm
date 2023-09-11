@@ -1,0 +1,103 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  PROJECT_NAME: pgterm
+dotenv: ['.env.personal', '.env']
+
+tasks:
+  clean:
+    desc: "removes build artifacts from repo"
+    cmds:
+      - go clean
+      - rm -f localhost.crt localhost.key
+
+  build:
+    desc: "builds project binary for host OS"
+    cmds:
+      - go build -trimpath -ldflags "{{.BUILD_FLAGS}}" -o {{.PROJECT_NAME}}{{exeExt}} {{.CLI_ARGS}}
+    sources:
+      - ./**/*.go
+    generates:
+      - '{{.PROJECT_NAME}}{{exeExt}}'
+    method: checksum
+    env:
+      CGO_ENABLED: 0
+      GOOS: '{{default "" .BUILD_OS}}'
+      GOARCH: '{{default "" .BUILD_ARCH}}'
+    vars:
+      BUILD_FLAGS: '{{default "" .BUILD_FLAGS}}'
+
+  run:
+    desc: "runs application on local machine"
+    deps: [ build ]
+    sources:
+      - ./**/*
+      - ./*
+    cmds:
+      - ./{{.PROJECT_NAME}}{{exeExt}}
+  
+  run:pretty:
+    desc: "runs image prettily"
+    deps: [build]
+    sources:
+      - ./**/*
+      - ./*
+    cmds:
+      - ./{{.PROJECT_NAME}}{{exeExt}} | jq -R -r "${1:-.} as \$line | try fromjson catch \$line"
+
+  query:
+    cmds:
+      - psql {{.PG_URL}}
+  
+  build:debug:
+    desc: "builds project binary for host OS with debugging flags"
+    cmds:
+      - go build -ldflags -gcflags "all=-N -l" "{{.BUILD_FLAGS}}" -o {{.PROJECT_NAME}}{{exeExt}}_debug {{.CLI_ARGS}}
+    sources:
+      - ./**/*.go
+    generates:
+      - '{{.PROJECT_NAME}}{{exeExt}}_debug'
+    method: checksum
+    env:
+      CGO_ENABLED: 0
+      GOOS: '{{default "" .BUILD_OS}}'
+      GOARCH: '{{default "" .BUILD_ARCH}}'
+    vars:
+      BUILD_FLAGS: '{{default "" .BUILD_FLAGS}}'
+
+  run:debug:
+    desc: "runs application that has debugging flags on local machine"
+    deps: [ build:debug ]
+    sources:
+      - ./**/*
+      - ./*
+    cmds:
+      - ./{{.PROJECT_NAME}}{{exeExt}}
+
+  test:unit:
+    desc: "runs unit tests"
+    cmds:
+      - go test -cover -race ./...
+    sources:
+      - ./**/*.go
+
+  format:
+    desc: "formats Go code across repo"
+    cmds:
+      - gofmt -s -w .
+    sources:
+      - ./**/*.go
+
+  lint:
+    desc: "lints Go code"
+    cmds:
+      - cmd: golangci-lint run -v -c ./.golangci.yml
+        ignore_error: true
+
+  update-deps:
+    desc: updates the Go dependencies
+    cmds:
+      - go list -f {{"\"{{if not (or .Main .Indirect)}}{{.Path}}{{end}}\""}} -m all | xargs -L 1 go get -u -v
+      - go mod tidy
